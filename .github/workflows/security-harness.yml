@@ -1,0 +1,109 @@
+name: security-harness
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  report-flood:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: umineko
+          POSTGRES_PASSWORD: umineko
+          POSTGRES_DB: umineko_city_of_books
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U umineko"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: umineko
+      POSTGRES_PASSWORD: umineko
+      PGPASSWORD: umineko
+      BASE_URL: http://127.0.0.1:4323
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: grafana/setup-k6-action@v1
+
+      - name: Seed the load-test database
+        env:
+          POSTGRES_DB: umineko_city_of_books
+        run: |
+          go run ./scripts/loadtest/seed \
+            -db umineko_loadtest \
+            -users 20 -posts 6 -follows 5 \
+            -rooms-per-user 2 -room-size 5 -messages 3 \
+            -out scripts/security/users.json
+
+      - name: Promote moderators and pick the harness target
+        run: |
+          psql -h 127.0.0.1 -U umineko -d umineko_loadtest -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO user_roles (user_id, role)
+          SELECT id, 'moderator' FROM users ORDER BY created_at LIMIT 3
+          ON CONFLICT DO NOTHING;
+          SQL
+
+          {
+            echo "TARGET_ID=$(psql -h 127.0.0.1 -U umineko -d umineko_loadtest -tAc 'select coalesce((select id from posts limit 1), (select id from users limit 1))')"
+            echo "ROOM_ID=$(psql -h 127.0.0.1 -U umineko -d umineko_loadtest -tAc 'select id from chat_rooms limit 1')"
+          } >> "$GITHUB_ENV"
+
+      - name: Start the app
+        env:
+          POSTGRES_DB: umineko_loadtest
+        run: |
+          go build -o umineko .
+          nohup ./umineko > app.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:4323/livez >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "app did not become ready" >&2
+          tail -n 100 app.log >&2
+          exit 1
+
+      - name: Report flood against the throttled chat control
+        run: |
+          psql_target="psql -h 127.0.0.1 -U umineko -d umineko_loadtest -tAc"
+          reports_before=$($psql_target 'select count(*) from reports')
+          notifs_before=$($psql_target "select count(*) from notifications where type = 'report'")
+
+          k6 run scripts/security/report-flood.js
+
+          reports_after=$($psql_target 'select count(*) from reports')
+          notifs_after=$($psql_target "select count(*) from notifications where type = 'report'")
+
+          {
+            echo "| metric | before | after | delta |"
+            echo "| --- | ---: | ---: | ---: |"
+            echo "| reports | $reports_before | $reports_after | $((reports_after - reports_before)) |"
+            echo "| report notifications | $notifs_before | $notifs_after | $((notifs_after - notifs_before)) |"
+          } | tee counts.md
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-flood-evidence
+          path: |
+            summary.json
+            counts.md
+            app.log
+          if-no-files-found: warn

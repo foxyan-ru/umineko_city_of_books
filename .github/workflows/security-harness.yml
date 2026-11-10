@@ -60,7 +60,7 @@ jobs:
 
           {
             echo "TARGET_ID=$(psql -h 127.0.0.1 -U umineko -d umineko_loadtest -tAc 'select coalesce((select id from posts limit 1), (select id from users limit 1))')"
-            control_user=$(jq -r '.[1].id' scripts/security/users.json)
+            control_user=$(jq -r '.[0].id' scripts/security/users.json)
             echo "ROOM_ID=$(psql -h 127.0.0.1 -U umineko -d umineko_loadtest -tAc "select room_id from chat_room_members where user_id = '$control_user' and left_at is null limit 1")"
           } >> "$GITHUB_ENV"
 

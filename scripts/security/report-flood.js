@@ -33,9 +33,7 @@ export const options = {
     },
 };
 
-function authHeaders(vu) {
-    const user = USERS[vu % USERS.length];
-
+function authHeaders(user) {
     return {
         headers: {
             "Content-Type": "application/json",
@@ -48,7 +46,7 @@ export function report() {
     const res = http.post(
         `${BASE_URL}/api/v1/report`,
         JSON.stringify({ target_type: "post", target_id: TARGET_ID, reason: "harness flood" }),
-        authHeaders(__VU),
+        authHeaders(USERS[__VU % USERS.length]),
     );
 
     check(res, { "report accepted": (r) => r.status === 201 });
@@ -63,7 +61,7 @@ export function chat() {
     const res = http.post(
         `${BASE_URL}/api/v1/chat/rooms/${ROOM_ID}/messages`,
         JSON.stringify({ body: `harness control ${Date.now()}` }),
-        authHeaders(__VU),
+        authHeaders(USERS[0]),
     );
 
     check(res, { "chat send limited": (r) => r.status === 201 || r.status === 429 });

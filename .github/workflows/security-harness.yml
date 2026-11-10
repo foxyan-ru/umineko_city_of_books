@@ -67,6 +67,8 @@ jobs:
         env:
           POSTGRES_DB: umineko_loadtest
         run: |
+          mkdir -p static
+          printf '<!doctype html><title>harness</title>\n' > static/index.html
           go build -o umineko .
           nohup ./umineko > app.log 2>&1 &
           for i in $(seq 1 90); do

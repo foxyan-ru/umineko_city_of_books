@@ -11,6 +11,7 @@ const reportAccepted = new Counter("report_accepted");
 const reportRejected = new Counter("report_rejected");
 const chatAccepted = new Counter("chat_accepted");
 const chatThrottled = new Counter("chat_throttled");
+const chatRejected = new Counter("chat_rejected");
 
 http.setResponseCallback(http.expectedStatuses(201, 429));
 
@@ -66,10 +67,12 @@ export function chat() {
     );
 
     check(res, { "chat send limited": (r) => r.status === 201 || r.status === 429 });
-    if (res.status === 429) {
+    if (res.status === 201) {
+        chatAccepted.add(1);
+    } else if (res.status === 429) {
         chatThrottled.add(1);
     } else {
-        chatAccepted.add(1);
+        chatRejected.add(1);
     }
 }
 
@@ -80,6 +83,7 @@ export function handleSummary(data) {
         report_rejected: pick("report_rejected"),
         chat_accepted: pick("chat_accepted"),
         chat_throttled: pick("chat_throttled"),
+        chat_rejected: pick("chat_rejected"),
         http_reqs: pick("http_reqs"),
     };
 
